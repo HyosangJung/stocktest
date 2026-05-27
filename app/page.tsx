@@ -41,7 +41,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
+    <main className="min-h-screen flex flex-col items-center justify-center px-4" style={{ backgroundColor: '#cd6133' }}>
       <h1 className="text-2xl font-semibold text-gray-800 mb-8">주식 현재가 조회</h1>
 
       <form onSubmit={handleSearch} className="w-full max-w-md flex gap-2">
