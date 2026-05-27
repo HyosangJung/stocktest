@@ -49,9 +49,10 @@ export default function Home() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="종목명 또는 종목코드 입력"
+          placeholder="종목코드 6자리 입력 (예: 005930)"
           className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           disabled={loading}
+          maxLength={6}
         />
         <button
           type="submit"
@@ -62,7 +63,11 @@ export default function Home() {
         </button>
       </form>
 
-      <div className="mt-8 w-full max-w-md">
+      <p className="mt-2 text-xs text-gray-400">
+        삼성전자 005930 · SK하이닉스 000660 · 카카오 035720 · NAVER 035420
+      </p>
+
+      <div className="mt-6 w-full max-w-md">
         {error && (
           <p className="text-red-500 text-sm text-center">{error}</p>
         )}

@@ -1,10 +1,17 @@
-// 종목코드 또는 종목명으로 KIS Open API 실투자 서버에서 현재가를 조회하는 API Route
+// 종목코드 또는 종목코드로 KIS Open API 실투자 서버에서 현재가를 조회하는 API Route
 
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 
-// 토큰 발급 내부 호출 (같은 서버이므로 fetch 사용)
+// 서버 메모리에 토큰 캐싱 (만료 1분 전까지 재사용)
+let cachedToken: { access_token: string; expires_at: number } | null = null;
+
 async function getAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedToken && cachedToken.expires_at - 60_000 > now) {
+    return cachedToken.access_token;
+  }
+
   const baseUrl = process.env.KIS_BASE_URL!;
   const appKey = process.env.KIS_APP_KEY!;
   const appSecret = process.env.KIS_APP_SECRET!;
@@ -14,11 +21,14 @@ async function getAccessToken(): Promise<string> {
     { grant_type: 'client_credentials', appkey: appKey, appsecret: appSecret },
     { headers: { 'Content-Type': 'application/json' } }
   );
-  return res.data.access_token;
+
+  const { access_token, expires_in } = res.data;
+  cachedToken = { access_token, expires_at: now + expires_in * 1000 };
+  return access_token;
 }
 
-// 종목명으로 종목코드 검색
-async function searchTicker(token: string, query: string): Promise<{ ticker: string; name: string } | null> {
+// 종목코드로 종목명 조회 (search-stock-info는 PDNO=종목코드만 지원)
+async function fetchStockName(token: string, ticker: string): Promise<string> {
   const baseUrl = process.env.KIS_BASE_URL!;
   const appKey = process.env.KIS_APP_KEY!;
   const appSecret = process.env.KIS_APP_SECRET!;
@@ -34,17 +44,15 @@ async function searchTicker(token: string, query: string): Promise<{ ticker: str
     },
     params: {
       PRDT_TYPE_CD: '300',  // 주식
-      PDNO: query,
+      PDNO: ticker,
     },
   });
 
-  const output = res.data?.output;
-  if (!output || !output.pdno) return null;
-  return { ticker: output.pdno, name: output.prdt_abrv_name };
+  return res.data?.output?.prdt_abrv_name ?? ticker;
 }
 
 // 종목코드로 현재가 조회 (실투자 tr_id: FHKST01010100)
-async function inquirePrice(token: string, ticker: string): Promise<{ name: string; price: string }> {
+async function inquirePrice(token: string, ticker: string): Promise<string> {
   const baseUrl = process.env.KIS_BASE_URL!;
   const appKey = process.env.KIS_APP_KEY!;
   const appSecret = process.env.KIS_APP_SECRET!;
@@ -65,12 +73,8 @@ async function inquirePrice(token: string, ticker: string): Promise<{ name: stri
   });
 
   const output = res.data?.output;
-  if (!output) throw new Error('현재가 조회 실패: 응답 데이터 없음');
-
-  return {
-    name: output.hts_kor_isnm,   // 종목명
-    price: output.stck_prpr,      // 주식 현재가
-  };
+  if (!output?.stck_prpr) throw new Error('현재가 조회 실패: 응답 데이터 없음');
+  return output.stck_prpr;
 }
 
 export async function GET(req: NextRequest) {
@@ -79,30 +83,24 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: '종목명 또는 종목코드를 입력하세요.' }, { status: 400 });
   }
 
+  // 6자리 숫자가 아니면 종목명으로 간주하지만, KIS API는 코드 검색만 지원하므로 안내 반환
+  if (!/^\d{6}$/.test(query)) {
+    return NextResponse.json(
+      { error: '종목코드(6자리 숫자)를 입력하세요. 예: 005930 (삼성전자), 000660 (SK하이닉스)' },
+      { status: 400 }
+    );
+  }
+
   try {
     const token = await getAccessToken();
 
-    // 6자리 숫자이면 종목코드로 바로 조회, 아니면 종목명 검색 후 조회
-    const isTickerCode = /^\d{6}$/.test(query);
-    let ticker = query;
-    let nameFromSearch: string | undefined;
+    // 종목명과 현재가를 병렬로 조회
+    const [name, price] = await Promise.all([
+      fetchStockName(token, query),
+      inquirePrice(token, query),
+    ]);
 
-    if (!isTickerCode) {
-      const found = await searchTicker(token, query);
-      if (!found) {
-        return NextResponse.json({ error: `"${query}" 에 해당하는 종목을 찾을 수 없습니다.` }, { status: 404 });
-      }
-      ticker = found.ticker;
-      nameFromSearch = found.name;
-    }
-
-    const { name, price } = await inquirePrice(token, ticker);
-
-    return NextResponse.json({
-      name: name || nameFromSearch || ticker,
-      price,
-      ticker,
-    });
+    return NextResponse.json({ name, price, ticker: query });
   } catch (err: unknown) {
     const message = axios.isAxiosError(err)
       ? JSON.stringify(err.response?.data ?? err.message)
