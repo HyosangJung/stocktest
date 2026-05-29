@@ -39,19 +39,16 @@ export default function Home() {
     }
 
     debounceRef.current = setTimeout(async () => {
+      if (justSelectedRef.current) {
+        justSelectedRef.current = false;
+        return;
+      }
       try {
         const res  = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
         const data = await res.json();
         setSuggestions(data.suggestions ?? []);
         setShowSuggestions((data.suggestions ?? []).length > 0);
         setHighlighted(-1);
-        if (justSelectedRef.current) {
-          justSelectedRef.current = false;
-          setTimeout(() => {
-            setSuggestions([]);
-            setShowSuggestions(false);
-          }, 200);
-        }
       } catch {
         // 자동완성 오류는 무시
       }
