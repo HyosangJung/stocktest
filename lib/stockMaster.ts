@@ -129,13 +129,14 @@ async function getMasterMap(): Promise<Map<string, string>> {
 export async function searchByName(query: string): Promise<StockCandidate[]> {
   const map = await getMasterMap();
   const q = query.trim();
+  const qUpper = q.toUpperCase();
 
-  const exactCode = map.get(q);
+  const exactCode = map.get(q) ?? map.get(qUpper);
   if (exactCode) return [{ name: q, code: exactCode }];
 
   const matches: StockCandidate[] = [];
   for (const [name, code] of map.entries()) {
-    if (name.includes(q)) matches.push({ name, code });
+    if (name.toUpperCase().includes(qUpper)) matches.push({ name, code });
     if (matches.length >= 10) break;
   }
 
@@ -148,12 +149,14 @@ export async function suggestByName(query: string): Promise<StockCandidate[]> {
   const q = query.trim();
   if (!q) return [];
 
+  const qUpper = q.toUpperCase();
   const starts: StockCandidate[] = [];
   const contains: StockCandidate[] = [];
 
   for (const [name, code] of map.entries()) {
-    if (name.startsWith(q)) starts.push({ name, code });
-    else if (name.includes(q)) contains.push({ name, code });
+    const nameUpper = name.toUpperCase();
+    if (nameUpper.startsWith(qUpper)) starts.push({ name, code });
+    else if (nameUpper.includes(qUpper)) contains.push({ name, code });
     if (starts.length >= 10) break;
   }
 
