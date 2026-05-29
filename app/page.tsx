@@ -102,6 +102,16 @@ export default function Home() {
     fetchPrice(c.code);
   }
 
+  function clearAll() {
+    setQuery('');
+    setResult(null);
+    setCandidates([]);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setError(null);
+    setHighlighted(-1);
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (!showSuggestions || suggestions.length === 0) return;
     if (e.key === 'ArrowDown') {
@@ -131,9 +141,20 @@ export default function Home() {
               onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
               placeholder="종목코드(005930) 또는 종목명(삼성전자)"
-              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/60"
+              className="w-full border border-gray-300 rounded-lg pl-4 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/60"
               disabled={loading}
             />
+
+            {query && !loading && (
+              <button
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); clearAll(); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
+                aria-label="초기화"
+              >
+                ×
+              </button>
+            )}
 
             {showSuggestions && (
               <ul className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-y-auto max-h-[320px]">
