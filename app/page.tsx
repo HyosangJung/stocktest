@@ -190,9 +190,6 @@ export default function Home() {
         </form>
       </div>
 
-      <p className="mt-2 text-xs text-white/60">
-        삼성전자 005930 · SK하이닉스 000660 · 카카오 035720 · NAVER 035420
-      </p>
 
       <div className="mt-6 w-full max-w-md">
         {error && (
