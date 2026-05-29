@@ -24,7 +24,8 @@ export default function Home() {
   const [highlighted, setHighlighted] = useState(-1);
   const [error, setError]           = useState<string | null>(null);
   const [loading, setLoading]       = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const justSelectedRef = useRef(false); // 종목 선택 직후 재조회 드롭다운을 200ms 뒤 자동 숨김
 
   // 키 입력마다 자동완성 후보 조회 (200ms 디바운스)
   useEffect(() => {
@@ -44,6 +45,13 @@ export default function Home() {
         setSuggestions(data.suggestions ?? []);
         setShowSuggestions((data.suggestions ?? []).length > 0);
         setHighlighted(-1);
+        if (justSelectedRef.current) {
+          justSelectedRef.current = false;
+          setTimeout(() => {
+            setSuggestions([]);
+            setShowSuggestions(false);
+          }, 200);
+        }
       } catch {
         // 자동완성 오류는 무시
       }
@@ -91,6 +99,7 @@ export default function Home() {
   }
 
   function selectSuggestion(s: Candidate) {
+    justSelectedRef.current = true;
     setQuery(s.name);
     setSuggestions([]);
     setShowSuggestions(false);
