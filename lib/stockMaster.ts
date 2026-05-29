@@ -16,9 +16,13 @@ export type StockCandidate = { name: string; code: string };
 let memCache: { map: Map<string, string>; at: number } | null = null;
 const MEM_TTL_MS = 6 * 60 * 60 * 1000; // 6시간
 
+let redis: Redis | null | undefined;
 function getRedis(): Redis | null {
-  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return null;
-  return new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN });
+  if (redis !== undefined) return redis;
+  redis = (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+    ? new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN })
+    : null;
+  return redis;
 }
 
 function download(url: string): Promise<Buffer> {
