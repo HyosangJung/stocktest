@@ -7,7 +7,7 @@ import { Redis } from '@upstash/redis';
 
 const KOSPI_ZIP_URL  = 'https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip';
 const KOSDAQ_ZIP_URL = 'https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip';
-const REDIS_KEY = 'kis:stock_master_v1';
+const REDIS_KEY = 'kis:stock_master_v2'; // v2: ETN 알파벳 코드 포함
 const REDIS_TTL = 24 * 60 * 60; // 24시간
 
 export type StockCandidate = { name: string; code: string };
@@ -72,7 +72,7 @@ function parseMst(buf: Buffer, trailBytes: number): [string, string][] {
     if (lineLen > trailBytes + 21) {
       const code = line.slice(0, 9).toString('ascii').trim();
       const name = iconv.decode(line.slice(21, lineLen - trailBytes), 'cp949').trim();
-      if (/^\d{6}$/.test(code) && name) entries.push([name, code]);
+      if (/^[A-Z0-9]{6}$/i.test(code) && name) entries.push([name, code]);
     }
 
     pos = end + 1;
@@ -141,6 +141,15 @@ export async function searchByName(query: string): Promise<StockCandidate[]> {
   }
 
   return matches;
+}
+
+// 코드로 종목명 조회 (마스터 캐시 사용)
+export async function getNameByCode(code: string): Promise<string | null> {
+  const map = await getMasterMap();
+  for (const [name, c] of map.entries()) {
+    if (c === code) return name;
+  }
+  return null;
 }
 
 // 자동완성용 검색 — 앞글자 일치 우선, 포함 일치 후순위, 최대 30건
