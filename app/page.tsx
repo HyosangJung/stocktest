@@ -89,9 +89,7 @@ export default function Home() {
     e.preventDefault();
     if (!query.trim()) return;
     if (highlighted >= 0 && suggestions[highlighted]) {
-      const s = suggestions[highlighted];
-      setQuery(s.name);
-      fetchPrice(s.code);
+      selectSuggestion(suggestions[highlighted]);
     } else {
       fetchPrice(query);
     }
