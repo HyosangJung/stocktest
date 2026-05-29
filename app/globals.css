@@ -1,5 +1,5 @@
 @import "tailwindcss";
 
 input::placeholder {
-  color: #84817a;
+  color: white;
 }

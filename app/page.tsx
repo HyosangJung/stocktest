@@ -146,7 +146,7 @@ export default function Home() {
               onKeyDown={handleKeyDown}
               onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-              placeholder="종목코드(005930) 또는 종목명(삼성전자)"
+              placeholder="종목코드 또는 종목명을 입력하세요."
               className="w-full border border-gray-300 rounded-lg pl-4 pr-8 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/60"
               disabled={loading}
             />
