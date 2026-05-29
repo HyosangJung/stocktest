@@ -165,12 +165,12 @@ export async function suggestByName(query: string): Promise<StockCandidate[]> {
   for (const [name, code] of map.entries()) {
     const nameUpper = name.toUpperCase();
     if (nameUpper.startsWith(qUpper)) {
-      if (starts.length < 20) starts.push({ name, code });
+      if (starts.length < 30) starts.push({ name, code });
     } else if (nameUpper.includes(qUpper)) {
-      if (contains.length < 20) contains.push({ name, code });
+      if (contains.length < 30) contains.push({ name, code });
     }
-    if (starts.length >= 20 && contains.length >= 20) break;
+    if (starts.length >= 30 && contains.length >= 30) break;
   }
 
-  return [...starts, ...contains].slice(0, 30);
+  return [...starts, ...contains].slice(0, 60);
 }
