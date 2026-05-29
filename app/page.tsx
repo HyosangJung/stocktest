@@ -2,7 +2,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface StockResult {
   name: string;
@@ -19,14 +19,46 @@ export default function Home() {
   const [query, setQuery]           = useState('');
   const [result, setResult]         = useState<StockResult | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [suggestions, setSuggestions] = useState<Candidate[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
   const [error, setError]           = useState<string | null>(null);
   const [loading, setLoading]       = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 키 입력마다 자동완성 후보 조회 (200ms 디바운스)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const q = query.trim();
+    if (!q || /^\d{6}$/.test(q)) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res  = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
+        const data = await res.json();
+        setSuggestions(data.suggestions ?? []);
+        setShowSuggestions((data.suggestions ?? []).length > 0);
+        setHighlighted(-1);
+      } catch {
+        // 자동완성 오류는 무시
+      }
+    }, 200);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query]);
 
   async function fetchPrice(q: string) {
     setLoading(true);
     setError(null);
     setResult(null);
     setCandidates([]);
+    setSuggestions([]);
+    setShowSuggestions(false);
 
     try {
       const res  = await fetch(`/api/stock?query=${encodeURIComponent(q.trim())}`);
@@ -49,7 +81,20 @@ export default function Home() {
   function handleSearch(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!query.trim()) return;
-    fetchPrice(query);
+    if (highlighted >= 0 && suggestions[highlighted]) {
+      const s = suggestions[highlighted];
+      setQuery(s.name);
+      fetchPrice(s.code);
+    } else {
+      fetchPrice(query);
+    }
+  }
+
+  function selectSuggestion(s: Candidate) {
+    setQuery(s.name);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    fetchPrice(s.code);
   }
 
   function selectCandidate(c: Candidate) {
@@ -57,27 +102,66 @@ export default function Home() {
     fetchPrice(c.code);
   }
 
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlighted(h => Math.min(h + 1, suggestions.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlighted(h => Math.max(h - 1, -1));
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
+      setHighlighted(-1);
+    }
+  }
+
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4" style={{ backgroundColor: '#cd6133' }}>
       <h1 className="text-2xl font-semibold text-white mb-8">주식 현재가 조회</h1>
 
-      <form onSubmit={handleSearch} className="w-full max-w-md flex gap-2">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="종목코드(005930) 또는 종목명(삼성전자)"
-          className="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/60"
-          disabled={loading}
-        />
-        <button
-          type="submit"
-          disabled={loading || !query.trim()}
-          className="bg-white/20 hover:bg-white/30 disabled:bg-white/10 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors border border-white/40"
-        >
-          {loading ? '조회 중...' : '검색'}
-        </button>
-      </form>
+      <div className="w-full max-w-md">
+        <form onSubmit={handleSearch} className="flex gap-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+              placeholder="종목코드(005930) 또는 종목명(삼성전자)"
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/60"
+              disabled={loading}
+            />
+
+            {showSuggestions && (
+              <ul className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
+                {suggestions.map((s, i) => (
+                  <li
+                    key={s.code}
+                    onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+                    className={`flex items-center justify-between px-4 py-2.5 cursor-pointer text-sm border-b border-gray-100 last:border-b-0 ${
+                      i === highlighted ? 'bg-orange-50' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="text-gray-800 font-medium">{s.name}</span>
+                    <span className="text-gray-400 text-xs">{s.code}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !query.trim()}
+            className="bg-white/20 hover:bg-white/30 disabled:bg-white/10 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors border border-white/40"
+          >
+            {loading ? '조회 중...' : '검색'}
+          </button>
+        </form>
+      </div>
 
       <p className="mt-2 text-xs text-white/60">
         삼성전자 005930 · SK하이닉스 000660 · 카카오 035720 · NAVER 035420
@@ -88,7 +172,6 @@ export default function Home() {
           <p className="text-white text-sm text-center bg-red-500/50 rounded-lg px-4 py-3">{error}</p>
         )}
 
-        {/* 종목명 검색 시 후보 목록 */}
         {candidates.length > 0 && (
           <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden">
             <p className="text-white/70 text-xs px-4 py-2 border-b border-white/10">
@@ -107,7 +190,6 @@ export default function Home() {
           </div>
         )}
 
-        {/* 조회 결과 */}
         {result && (
           <div className="flex items-center justify-between bg-white/10 border border-white/20 rounded-lg px-6 py-4">
             <div>

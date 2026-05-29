@@ -141,3 +141,21 @@ export async function searchByName(query: string): Promise<StockCandidate[]> {
 
   return matches;
 }
+
+// 자동완성용 검색 — 앞글자 일치 우선, 최대 10건
+export async function suggestByName(query: string): Promise<StockCandidate[]> {
+  const map = await getMasterMap();
+  const q = query.trim();
+  if (!q) return [];
+
+  const starts: StockCandidate[] = [];
+  const contains: StockCandidate[] = [];
+
+  for (const [name, code] of map.entries()) {
+    if (name.startsWith(q)) starts.push({ name, code });
+    else if (name.includes(q)) contains.push({ name, code });
+    if (starts.length >= 10) break;
+  }
+
+  return [...starts, ...contains].slice(0, 10);
+}
