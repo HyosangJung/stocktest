@@ -31,6 +31,12 @@ export default function Home() {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
+    // 종목 선택 직후 query 변경 시 자동완성 재조회 차단
+    if (justSelectedRef.current) {
+      justSelectedRef.current = false;
+      return;
+    }
+
     const q = query.trim();
     if (!q || /^\d{6}$/.test(q)) {
       setSuggestions([]);
@@ -39,10 +45,6 @@ export default function Home() {
     }
 
     debounceRef.current = setTimeout(async () => {
-      if (justSelectedRef.current) {
-        justSelectedRef.current = false;
-        return;
-      }
       try {
         const res  = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
         const data = await res.json();
