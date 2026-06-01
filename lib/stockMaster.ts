@@ -3,7 +3,7 @@
 import https from 'https';
 import zlib from 'zlib';
 import iconv from 'iconv-lite';
-import { Redis } from '@upstash/redis';
+import { getRedis } from '@/lib/redis';
 
 const KOSPI_ZIP_URL  = 'https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip';
 const KOSDAQ_ZIP_URL = 'https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip';
@@ -12,18 +12,16 @@ const REDIS_TTL = 24 * 60 * 60; // 24시간
 
 export type StockCandidate = { name: string; code: string };
 
-// 프로세스 내 메모리 캐시 (Redis 호출 최소화)
-let memCache: { map: Map<string, string>; at: number } | null = null;
-const MEM_TTL_MS = 6 * 60 * 60 * 1000; // 6시간
-
-let redis: Redis | null | undefined;
-function getRedis(): Redis | null {
-  if (redis !== undefined) return redis;
-  redis = (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
-    ? new Redis({ url: process.env.KV_REST_API_URL, token: process.env.KV_REST_API_TOKEN })
-    : null;
-  return redis;
+interface MasterCache {
+  nameToCode: Map<string, string>;          // name → code (정확 일치 조회)
+  codeToName: Map<string, string>;          // code → name (O(1) 역방향 조회)
+  upperEntries: [string, string, string][]; // [upperName, name, code] (검색 루프용 사전 변환)
+  at: number;
 }
+
+let memCache: MasterCache | null = null;
+const MEM_TTL_MS = 6 * 60 * 60 * 1000; // 6시간
+let masterInflight: Promise<MasterCache> | null = null;
 
 function download(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -42,20 +40,19 @@ function extractZip(buf: Buffer): Buffer {
   const idx = buf.indexOf(SIG);
   if (idx === -1) throw new Error('ZIP 시그니처를 찾을 수 없습니다.');
 
-  const compression  = buf.readUInt16LE(idx + 8);
-  const compSize     = buf.readUInt32LE(idx + 18);
-  const fnLen        = buf.readUInt16LE(idx + 26);
-  const extraLen     = buf.readUInt16LE(idx + 28);
-  const dataStart    = idx + 30 + fnLen + extraLen;
-  const data         = buf.slice(dataStart, dataStart + compSize);
+  const compression = buf.readUInt16LE(idx + 8);
+  const compSize    = buf.readUInt32LE(idx + 18);
+  const fnLen       = buf.readUInt16LE(idx + 26);
+  const extraLen    = buf.readUInt16LE(idx + 28);
+  const dataStart   = idx + 30 + fnLen + extraLen;
+  const data        = buf.slice(dataStart, dataStart + compSize);
 
-  if (compression === 0) return data;                    // stored
-  if (compression === 8) return zlib.inflateRawSync(data); // deflate
+  if (compression === 0) return data;
+  if (compression === 8) return zlib.inflateRawSync(data);
   throw new Error(`지원하지 않는 압축 방식: ${compression}`);
 }
 
 // MST 고정폭 CP949 파일 파싱 → [종목명, 단축코드] 배열 반환
-// trailBytes: 각 행 끝의 바이너리 필드 바이트 수 (KOSPI=228, KOSDAQ=222)
 function parseMst(buf: Buffer, trailBytes: number): [string, string][] {
   const entries: [string, string][] = [];
   let pos = 0;
@@ -81,80 +78,87 @@ function parseMst(buf: Buffer, trailBytes: number): [string, string][] {
   return entries;
 }
 
-async function buildMap(): Promise<Map<string, string>> {
+async function downloadEntries(): Promise<[string, string][]> {
   const [kospiZip, kosdaqZip] = await Promise.all([
     download(KOSPI_ZIP_URL),
     download(KOSDAQ_ZIP_URL),
   ]);
-
-  const entries = [
+  return [
     ...parseMst(extractZip(kospiZip),  228),
     ...parseMst(extractZip(kosdaqZip), 222),
   ];
-
-  return new Map(entries);
 }
 
-async function getMasterMap(): Promise<Map<string, string>> {
-  // 1단계: 메모리 캐시
-  if (memCache && Date.now() - memCache.at < MEM_TTL_MS) return memCache.map;
+// entries로부터 세 가지 인덱스를 한 번에 생성
+function buildCacheFromEntries(entries: [string, string][]): MasterCache {
+  const nameToCode = new Map(entries);
+  const codeToName = new Map(entries.map(([name, code]) => [code, name]));
+  const upperEntries = entries.map(
+    ([name, code]) => [name.toUpperCase(), name, code] as [string, string, string],
+  );
+  return { nameToCode, codeToName, upperEntries, at: Date.now() };
+}
 
-  // 2단계: Redis 캐시
-  const redis = getRedis();
-  if (redis) {
+async function loadFromRedisOrDownload(): Promise<MasterCache> {
+  const kv = getRedis();
+  if (kv) {
     try {
-      const stored = await redis.get<Record<string, string>>(REDIS_KEY);
+      const stored = await kv.get<Record<string, string>>(REDIS_KEY);
       if (stored) {
-        const map = new Map(Object.entries(stored));
-        memCache = { map, at: Date.now() };
-        return map;
+        memCache = buildCacheFromEntries(Object.entries(stored) as [string, string][]);
+        return memCache;
       }
     } catch { /* Redis 실패 시 마스터 파일로 폴백 */ }
   }
 
-  // 3단계: 마스터 파일 다운로드 + 파싱
-  const map = await buildMap();
-  memCache = { map, at: Date.now() };
+  const entries = await downloadEntries();
+  memCache = buildCacheFromEntries(entries);
 
-  if (redis) {
+  if (kv) {
     try {
-      await redis.set(REDIS_KEY, Object.fromEntries(map), { ex: REDIS_TTL });
+      await kv.set(REDIS_KEY, Object.fromEntries(entries), { ex: REDIS_TTL });
     } catch { /* 저장 실패 무시 */ }
   }
 
-  return map;
+  return memCache;
+}
+
+// inflight promise로 동시 다운로드 중복 실행 방지
+async function getMasterCache(): Promise<MasterCache> {
+  if (memCache && Date.now() - memCache.at < MEM_TTL_MS) return memCache;
+
+  if (!masterInflight) {
+    masterInflight = loadFromRedisOrDownload().finally(() => { masterInflight = null; });
+  }
+  return masterInflight;
 }
 
 // 종목명으로 후보 검색 (정확 일치 우선, 이후 부분 일치 최대 10건)
 export async function searchByName(query: string): Promise<StockCandidate[]> {
-  const map = await getMasterMap();
+  const cache = await getMasterCache();
   const q = query.trim();
   const qUpper = q.toUpperCase();
 
-  const exactCode = map.get(q) ?? map.get(qUpper);
+  const exactCode = cache.nameToCode.get(q) ?? cache.nameToCode.get(qUpper);
   if (exactCode) return [{ name: q, code: exactCode }];
 
   const matches: StockCandidate[] = [];
-  for (const [name, code] of map.entries()) {
-    if (name.toUpperCase().includes(qUpper)) matches.push({ name, code });
+  for (const [upperName, name, code] of cache.upperEntries) {
+    if (upperName.includes(qUpper)) matches.push({ name, code });
     if (matches.length >= 10) break;
   }
-
   return matches;
 }
 
-// 코드로 종목명 조회 (마스터 캐시 사용)
+// 코드로 종목명 조회 — O(1) 역방향 Map 사용
 export async function getNameByCode(code: string): Promise<string | null> {
-  const map = await getMasterMap();
-  for (const [name, c] of map.entries()) {
-    if (c === code) return name;
-  }
-  return null;
+  const cache = await getMasterCache();
+  return cache.codeToName.get(code) ?? null;
 }
 
 // 자동완성용 검색 — 앞글자 일치 우선, 포함 일치 후순위, 최대 30건
 export async function suggestByName(query: string): Promise<StockCandidate[]> {
-  const map = await getMasterMap();
+  const cache = await getMasterCache();
   const q = query.trim();
   if (!q) return [];
 
@@ -162,11 +166,10 @@ export async function suggestByName(query: string): Promise<StockCandidate[]> {
   const starts: StockCandidate[] = [];
   const contains: StockCandidate[] = [];
 
-  for (const [name, code] of map.entries()) {
-    const nameUpper = name.toUpperCase();
-    if (nameUpper.startsWith(qUpper)) {
+  for (const [upperName, name, code] of cache.upperEntries) {
+    if (upperName.startsWith(qUpper)) {
       if (starts.length < 30) starts.push({ name, code });
-    } else if (nameUpper.includes(qUpper)) {
+    } else if (upperName.includes(qUpper)) {
       if (contains.length < 30) contains.push({ name, code });
     }
     if (starts.length >= 30 && contains.length >= 30) break;

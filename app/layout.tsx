@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "주식 현재가 조회",
+  title: "종목 개요",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
