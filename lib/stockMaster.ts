@@ -156,7 +156,7 @@ export async function getNameByCode(code: string): Promise<string | null> {
   return cache.codeToName.get(code) ?? null;
 }
 
-// 자동완성용 검색 — 앞글자 일치 우선, 포함 일치 후순위, 최대 30건
+// 자동완성용 검색 — 앞글자 일치 우선, 포함 일치 후순위, 최대 200건
 export async function suggestByName(query: string): Promise<StockCandidate[]> {
   const cache = await getMasterCache();
   const q = query.trim();
@@ -168,12 +168,12 @@ export async function suggestByName(query: string): Promise<StockCandidate[]> {
 
   for (const [upperName, name, code] of cache.upperEntries) {
     if (upperName.startsWith(qUpper)) {
-      if (starts.length < 30) starts.push({ name, code });
+      if (starts.length < 200) starts.push({ name, code });
     } else if (upperName.includes(qUpper)) {
-      if (contains.length < 30) contains.push({ name, code });
+      if (contains.length < 200) contains.push({ name, code });
     }
-    if (starts.length >= 30 && contains.length >= 30) break;
+    if (starts.length >= 200 && contains.length >= 200) break;
   }
 
-  return [...starts, ...contains].slice(0, 60);
+  return [...starts, ...contains].slice(0, 200);
 }

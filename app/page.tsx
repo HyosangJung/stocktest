@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import StockDetail from '@/app/components/StockDetail';
 import type { StockCandidate } from '@/lib/stockMaster';
 import type { EtfComponent } from '@/app/api/etf-components/route';
+import type { HtsItem, ShortSaleItem, MarketCapItem } from '@/app/api/rank/route';
 
 interface StockResult {
   name: string;
@@ -13,29 +14,18 @@ interface StockResult {
   ticker: string;
 }
 
-type TabKey = 'overview' | 'etf';
+type TabKey = 'overview' | 'etf' | 'rank';
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: '종목 개요' },
   { key: 'etf', label: 'ETF 종목 분해' },
+  { key: 'rank', label: 'Rank' },
 ];
 
 // 클라이언트에서 포맷 검증용 (서버 kisClient와 동일 패턴)
 const CODE_RE = /^[A-Z0-9]{6}$/i;
 const SUGGEST_CACHE_MAX = 100;
 
-function getChangeColor(sign: string): string {
-  if (sign === '1' || sign === '2') return 'text-red-300';
-  if (sign === '4' || sign === '5') return 'text-blue-300';
-  return 'text-white/40';
-}
-
-function formatChangeRate(sign: string, rate: string): string {
-  const abs = Math.abs(parseFloat(rate) || 0).toFixed(2);
-  if (sign === '1' || sign === '2') return `+${abs}%`;
-  if (sign === '4' || sign === '5') return `-${abs}%`;
-  return `${abs}%`;
-}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
@@ -52,8 +42,18 @@ export default function Home() {
   const [result, setResult]             = useState<StockResult | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
+  // Rank 탭 상태
+  const [rankSubTab, setRankSubTab]       = useState<'hts' | 'short-sale' | 'market-cap' | null>(null);
+  const [htsItems, setHtsItems]           = useState<HtsItem[] | null>(null);
+  const [shortSaleItems, setShortSaleItems] = useState<ShortSaleItem[] | null>(null);
+  const [marketCapItems, setMarketCapItems] = useState<MarketCapItem[] | null>(null);
+  const [rankLoading, setRankLoading]     = useState(false);
+  const [rankError, setRankError]         = useState<string | null>(null);
+
   // ETF 종목 분해 탭 상태
   const [etfComponents, setEtfComponents]         = useState<EtfComponent[] | null>(null);
+  const [etfComponentCount, setEtfComponentCount] = useState<number>(0);
+  const [etfCachedAt, setEtfCachedAt]             = useState<number | null>(null);
   const [selectedComponent, setSelectedComponent] = useState<EtfComponent | null>(null);
   const [etfError, setEtfError]                   = useState<string | null>(null);
 
@@ -137,6 +137,8 @@ export default function Home() {
     setLoading(true);
     setEtfError(null);
     setEtfComponents(null);
+    setEtfComponentCount(0);
+    setEtfCachedAt(null);
     setSelectedComponent(null);
     setCandidates([]);
     setSuggestions([]);
@@ -177,6 +179,8 @@ export default function Home() {
         );
       } else {
         setEtfComponents(data.components);
+        setEtfComponentCount(data.componentCount ?? 0);
+        setEtfCachedAt(data.cachedAt ?? null);
       }
     } catch {
       setEtfError('네트워크 오류가 발생했습니다.');
@@ -206,6 +210,33 @@ export default function Home() {
   function selectCandidate(c: StockCandidate) {
     setQuery(c.code);
     activeTab === 'etf' ? fetchEtfComponents(c.code) : fetchPrice(c.code);
+  }
+
+  async function fetchRank(type: 'hts' | 'short-sale' | 'market-cap') {
+    setRankSubTab(type);
+    setRankLoading(true);
+    setRankError(null);
+    if (type === 'hts') setHtsItems(null);
+    else if (type === 'short-sale') setShortSaleItems(null);
+    else setMarketCapItems(null);
+
+    try {
+      const res  = await fetch(`/api/rank?type=${type}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setRankError(data.error ?? '조회 실패');
+      } else if (type === 'hts') {
+        setHtsItems(data.items);
+      } else if (type === 'short-sale') {
+        setShortSaleItems(data.items);
+      } else {
+        setMarketCapItems(data.items);
+      }
+    } catch {
+      setRankError('네트워크 오류가 발생했습니다.');
+    } finally {
+      setRankLoading(false);
+    }
   }
 
   function switchTab(tab: TabKey) {
@@ -265,8 +296,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* 공유 검색 입력 */}
-      <div className="w-full max-w-md">
+      {/* 공유 검색 입력 — Rank 탭에서는 숨김 */}
+      <div className={`w-full max-w-md${activeTab === 'rank' ? ' hidden' : ''}`}>
         <form onSubmit={handleSearch} className="flex gap-2">
           <div className="relative flex-1">
             <input
@@ -353,7 +384,7 @@ export default function Home() {
               <p className="text-white text-sm text-center bg-red-500/50 rounded-lg px-4 py-3">{overviewError}</p>
             )}
             {result && (
-              <StockDetail name={result.name} price={result.price} ticker={result.ticker} />
+              <StockDetail name={result.name} ticker={result.ticker} />
             )}
           </>
         )}
@@ -370,8 +401,16 @@ export default function Home() {
               <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden">
                 <p className="text-white/70 text-xs px-4 py-2 border-b border-white/10">
                   구성종목 {etfComponents.length}개
+                  {etfComponentCount > etfComponents.length && (
+                    <span className="ml-1 text-white/40">/ 전체 {etfComponentCount}개</span>
+                  )}
                   {etfComponents.some(c => !c.isDomestic) && (
                     <span className="ml-2 text-white/40">· 해외 종목은 이름만 표시</span>
+                  )}
+                  {etfCachedAt !== null && (
+                    <span className="ml-2 text-yellow-300/70">
+                      · 마지막 장 기준 ({new Date(etfCachedAt).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })} {new Date(etfCachedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })})
+                    </span>
                   )}
                 </p>
                 {etfComponents.map((c, i) => {
@@ -388,15 +427,6 @@ export default function Home() {
                           {c.isDomestic ? c.code : '해외 종목'}
                         </span>
                       </div>
-                      {/* 국내 종목: 현재가 + 등락률 / 해외 종목: 표시 없음 */}
-                      {c.isDomestic && (
-                        <div className="text-right shrink-0">
-                          <div className="text-white text-sm">{Number(c.price).toLocaleString()}원</div>
-                          <div className={`text-xs ${getChangeColor(c.changeSign)}`}>
-                            {formatChangeRate(c.changeSign, c.changeRate)}
-                          </div>
-                        </div>
-                      )}
                     </>
                   );
 
@@ -431,10 +461,159 @@ export default function Home() {
                 </button>
                 <StockDetail
                   name={selectedComponent.name}
-                  price={selectedComponent.price}
                   ticker={selectedComponent.code}
                 />
               </>
+            )}
+          </>
+        )}
+
+        {/* Rank 탭 */}
+        {activeTab === 'rank' && (
+          <>
+            {/* 버튼 그룹 */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => fetchRank('hts')}
+                disabled={rankLoading}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors border ${
+                  rankSubTab === 'hts'
+                    ? 'bg-white text-orange-600 border-white'
+                    : 'bg-white/20 hover:bg-white/30 text-white border-white/40'
+                } disabled:opacity-50`}
+              >
+                HTS조회
+              </button>
+              <button
+                onClick={() => fetchRank('short-sale')}
+                disabled={rankLoading}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors border ${
+                  rankSubTab === 'short-sale'
+                    ? 'bg-white text-orange-600 border-white'
+                    : 'bg-white/20 hover:bg-white/30 text-white border-white/40'
+                } disabled:opacity-50`}
+              >
+                공매도
+              </button>
+              <button
+                onClick={() => fetchRank('market-cap')}
+                disabled={rankLoading}
+                className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors border ${
+                  rankSubTab === 'market-cap'
+                    ? 'bg-white text-orange-600 border-white'
+                    : 'bg-white/20 hover:bg-white/30 text-white border-white/40'
+                } disabled:opacity-50`}
+              >
+                시가총액
+              </button>
+            </div>
+
+            {rankLoading && (
+              <p className="text-white/70 text-sm text-center py-4">조회 중...</p>
+            )}
+
+            {rankError && (
+              <p className="text-white text-sm text-center bg-red-500/50 rounded-lg px-4 py-3">{rankError}</p>
+            )}
+
+            {/* HTS조회 결과 */}
+            {!rankLoading && rankSubTab === 'hts' && htsItems && (
+              <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden">
+                <p className="text-white/70 text-xs px-4 py-2 border-b border-white/10">
+                  HTS 조회 상위 {htsItems.length}종목
+                </p>
+                {htsItems.map((item) => (
+                  <div
+                    key={item.code}
+                    className="flex items-center gap-3 px-4 py-2.5 border-b border-white/10 last:border-b-0"
+                  >
+                    <span className="w-6 text-right text-white/40 text-xs shrink-0">{item.rank}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${
+                      item.market === '코스피' ? 'bg-blue-500/30 text-blue-200' : 'bg-green-500/30 text-green-200'
+                    }`}>
+                      {item.market}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-white text-sm font-medium block truncate">{item.name}</span>
+                    </div>
+                    <span className="text-white/40 text-xs shrink-0">{item.code}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 시가총액 결과 */}
+            {!rankLoading && rankSubTab === 'market-cap' && marketCapItems && (
+              <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden">
+                <p className="text-white/70 text-xs px-4 py-2 border-b border-white/10">
+                  시가총액 상위 {marketCapItems.length}종목
+                </p>
+                {marketCapItems.map((item) => {
+                  const isUp   = item.prdyVrssSign === '2' || item.prdyVrssSign === '1';
+                  const isDown = item.prdyVrssSign === '5' || item.prdyVrssSign === '4';
+                  const priceColor = isUp ? 'text-red-300' : isDown ? 'text-blue-300' : 'text-white/70';
+                  const prefix = isUp ? '+' : '';
+                  const avlsTr = parseInt(item.stckAvls, 10);
+                  const avlsLabel = avlsTr >= 10000
+                    ? `${(avlsTr / 10000).toFixed(1)}조`
+                    : `${avlsTr.toLocaleString()}억`;
+                  return (
+                    <div
+                      key={item.code}
+                      className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 last:border-b-0"
+                    >
+                      <span className="w-5 text-right text-white/40 text-xs shrink-0">{item.rank}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-white text-sm font-medium block truncate">{item.name}</span>
+                        <span className="text-white/40 text-xs">시총 {avlsLabel} · 비중 {parseFloat(item.mrktWholAvlsRlim).toFixed(2)}%</span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`text-sm font-medium block ${priceColor}`}>
+                          {Number(item.price).toLocaleString()}
+                        </span>
+                        <span className={`text-xs ${priceColor}`}>
+                          {prefix}{item.prdyCtrt}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 공매도 결과 */}
+            {!rankLoading && rankSubTab === 'short-sale' && shortSaleItems && (
+              <div className="bg-white/10 border border-white/20 rounded-lg overflow-hidden">
+                <p className="text-white/70 text-xs px-4 py-2 border-b border-white/10">
+                  공매도 상위 {shortSaleItems.length}종목
+                </p>
+                {shortSaleItems.map((item) => {
+                  const isUp   = item.prdyVrssSign === '2' || item.prdyVrssSign === '1';
+                  const isDown = item.prdyVrssSign === '5' || item.prdyVrssSign === '4';
+                  const priceColor = isUp ? 'text-red-300' : isDown ? 'text-blue-300' : 'text-white/70';
+                  const prefix = isUp ? '+' : '';
+                  return (
+                    <div
+                      key={item.code}
+                      className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 last:border-b-0"
+                    >
+                      <span className="w-5 text-right text-white/40 text-xs shrink-0">{item.rank}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-white text-sm font-medium block truncate">{item.name}</span>
+                        <span className="text-white/40 text-xs">공매도비중 {parseFloat(item.sstsVolRlim).toFixed(2)}%</span>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`text-sm font-medium block ${priceColor}`}>
+                          {Number(item.price).toLocaleString()}
+                        </span>
+                        <span className={`text-xs ${priceColor}`}>
+                          {prefix}{item.prdyCtrt}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </>
         )}
